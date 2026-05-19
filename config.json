@@ -1,7 +1,8 @@
 {
   "bot_start_date": "2026-04-27",
   "roles":[
-    {"name": "🪳真のファミリー🪳(参加率90%以上)", "min_percent": 90},
+    {"name": "🪳𝓞𝓷𝓮 𝓫𝓲𝓰 𝓫𝓲𝓰 𝓯𝓪𝓶𝓲𝓵𝔂🪳(参加率95%以上)", "min_percent": 95},
+    {"name": "🪳𝓞𝓷𝓮 𝓫𝓲𝓰 𝓯𝓪𝓶𝓲𝓵𝔂🪳(参加率90%以上)", "min_percent": 90},
     {"name": "ファミリー(参加率60%以上)", "min_percent": 60},
     {"name": "渋い(参加率30%以上)", "min_percent": 30},
     {"name": "ファミリー失格🤮", "min_percent": 0}

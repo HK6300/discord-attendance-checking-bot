@@ -152,6 +152,13 @@ async def calculate_attendance(member: discord.Member, guild: discord.Guild, tar
 async def update_member_role(member: discord.Member, guild: discord.Guild, target_date: date, threshold: int):
     rate, attended, total = await calculate_attendance(member, guild, target_date, threshold)
 
+    # ★ ロック状態を確認
+    is_locked = await bot.db.get_user_lock_status(member.id, guild.id)
+
+    if is_locked:
+        log_msg = "🔒 ロールは固定(ロック)されているため、自動更新をスキップしました。"
+        return rate, attended, total, log_msg
+
     old_percent = 0
     old_role_name = "なし"
     for r in member.roles:
@@ -353,13 +360,11 @@ async def total_time(interaction: discord.Interaction, target_user: discord.Memb
     await interaction.followup.send(embed=embed)
 
 
-# ★ 新規追加: ランキングを表示するコマンド
 @bot.tree.command(name="ranking", description="メンバーの総VC滞在時間ランキングを表示します")
 async def ranking(interaction: discord.Interaction):
     await interaction.response.defer()
     guild = interaction.guild
 
-    # 1. ギルド全体の累計データを一括取得（サーバーへの負荷軽減のため直接SQL実行）
     async with bot.db.pool.acquire() as conn:
         records = await conn.fetch('''
             SELECT user_id, SUM(total_minutes) as total
@@ -370,7 +375,6 @@ async def ranking(interaction: discord.Interaction):
         
     total_times = {r['user_id']: r['total'] for r in records}
 
-    # 2. 現在VCにいるユーザーのリアルタイム時間を加算
     current_vc_users = await bot.db.get_all_current_vc()
     now = datetime.now(JST)
     for r in current_vc_users:
@@ -380,7 +384,6 @@ async def ranking(interaction: discord.Interaction):
             duration = int((now - join_time).total_seconds() // 60)
             total_times[uid] = total_times.get(uid, 0) + duration
 
-    # 3. 現在サーバーにいるメンバーと紐付け
     ranking_data = []
     for member in guild.members:
         if member.bot:
@@ -389,7 +392,6 @@ async def ranking(interaction: discord.Interaction):
         if t > 0:
             ranking_data.append((member, t))
 
-    # 降順ソート（滞在時間が長い順）
     ranking_data.sort(key=lambda x: x[1], reverse=True)
 
     if not ranking_data:
@@ -399,7 +401,6 @@ async def ranking(interaction: discord.Interaction):
     embed = discord.Embed(title=f"🏆 {guild.name} VC滞在時間ランキング", color=discord.Color.gold())
     
     description = ""
-    # 上位15名を表示 (Discordの文字数制限対策)
     for i, (member, t) in enumerate(ranking_data[:15], 1):
         hours = t // 60
         mins = t % 60
@@ -461,6 +462,27 @@ async def override_attendance(interaction: discord.Interaction, target_user: dis
     _, _, _, log_msg = await update_member_role(target_user, interaction.guild, datetime.now(JST).date(), threshold)
 
     await interaction.response.send_message(f"✅ {target_user.display_name} の `{target_date}` の記録を **{status.name}** に上書きしました。\n```\n{log_msg}\n```")
+
+
+# ★新規追加: ユーザーのロールをロック(固定)するコマンド
+@bot.tree.command(name="lock_role", description="【管理者用】指定ユーザーのロール自動更新を固定(ロック)・解除します")
+@app_commands.default_permissions(manage_roles=True)
+@app_commands.choices(action=[
+    app_commands.Choice(name="🔒 固定する (自動更新ストップ)", value=1),
+    app_commands.Choice(name="🔓 解除する (自動更新スタート)", value=0)
+])
+async def lock_role(interaction: discord.Interaction, target_user: discord.Member, action: app_commands.Choice[int]):
+    is_locked = bool(action.value)
+    await bot.db.set_user_lock_status(target_user.id, interaction.guild.id, is_locked)
+    
+    if is_locked:
+        status_text = "🔒 固定 (自動更新ストップ)"
+        msg = f"✅ {target_user.display_name} のロールを現在の状態に **{status_text}** しました。\n以降、出席率が変動してもロールは自動で更新されません。"
+    else:
+        status_text = "🔓 解除 (自動更新スタート)"
+        msg = f"✅ {target_user.display_name} のロール固定を **{status_text}** しました。\n次回の集計時から、出席率に応じたロールが自動付与されます。"
+
+    await interaction.response.send_message(msg)
 
 
 if __name__ == "__main__":
