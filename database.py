@@ -10,20 +10,17 @@ class Database:
         self.pool = None
 
     async def connect(self):
-        # Neon DB用のコネクションプール作成
         self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=5)
         await self._init_tables()
 
     async def _init_tables(self):
         async with self.pool.acquire() as conn:
-            # ギルドごとの設定テーブル
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
                     threshold_minutes INT DEFAULT 30
                 )
             ''')
-            # 現在VCにいるユーザーの入室時刻記録（Render再起動対策）
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS current_vc (
                     user_id BIGINT PRIMARY KEY,
@@ -31,7 +28,6 @@ class Database:
                     join_time TIMESTAMP WITH TIME ZONE
                 )
             ''')
-            # 日々の累計滞在時間記録
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS daily_attendance (
                     user_id BIGINT,
@@ -41,6 +37,15 @@ class Database:
                     is_override BOOLEAN DEFAULT FALSE,
                     override_status VARCHAR(20),
                     PRIMARY KEY (user_id, guild_id, record_date)
+                )
+            ''')
+            # ★新規追加: ユーザーごとの設定（ロール固定フラグなど）を保存するテーブル
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id BIGINT,
+                    guild_id BIGINT,
+                    is_role_locked BOOLEAN DEFAULT FALSE,
+                    PRIMARY KEY (user_id, guild_id)
                 )
             ''')
 
@@ -100,3 +105,22 @@ class Database:
                 FROM daily_attendance 
                 WHERE user_id = $1 AND guild_id = $2
             ''', user_id, guild_id)
+
+    # ★新規追加: ユーザーのロールロック状態を取得
+    async def get_user_lock_status(self, user_id: int, guild_id: int) -> bool:
+        async with self.pool.acquire() as conn:
+            val = await conn.fetchval('''
+                SELECT is_role_locked FROM user_settings 
+                WHERE user_id = $1 AND guild_id = $2
+            ''', user_id, guild_id)
+            return bool(val)
+
+    # ★新規追加: ユーザーのロールロック状態を保存
+    async def set_user_lock_status(self, user_id: int, guild_id: int, is_locked: bool):
+        async with self.pool.acquire() as conn:
+            await conn.execute('''
+                INSERT INTO user_settings (user_id, guild_id, is_role_locked)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (user_id, guild_id) 
+                DO UPDATE SET is_role_locked = $3
+            ''', user_id, guild_id, is_locked)
